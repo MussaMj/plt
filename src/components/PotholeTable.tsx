@@ -1,6 +1,6 @@
 import React from 'react';
 import { Search, Filter, ExternalLink, MapPin, CheckCircle, Play } from 'lucide-react';
-import { Pothole } from '../types';
+import { Pothole, Technician } from '../types';
 import { getCategoryLabel } from '../categories';
 
 interface PotholeTableProps {
@@ -16,12 +16,13 @@ interface PotholeTableProps {
     setFilterCity: (s: string) => void;
     filterDate: string;
     setFilterDate: (s: string) => void;
+    filterTechnicianId: string;
+    setFilterTechnicianId: (s: string) => void;
     categories: string[];
     cities: string[];
+    technicians: Technician[];
     onUpdateStatus: (id: string, s: string, notes?: string, tech?: string) => void;
     onShowDetails: (pothole: Pothole) => void;
-    myTasksOnly: boolean;
-    setMyTasksOnly: (b: boolean) => void;
 }
 
 const PotholeTable: React.FC<PotholeTableProps> = ({
@@ -37,12 +38,13 @@ const PotholeTable: React.FC<PotholeTableProps> = ({
     setFilterCity,
     filterDate,
     setFilterDate,
+    filterTechnicianId,
+    setFilterTechnicianId,
     categories,
     cities,
+    technicians,
     onUpdateStatus,
     onShowDetails,
-    myTasksOnly,
-    setMyTasksOnly
 }) => {
 
     return (
@@ -50,12 +52,6 @@ const PotholeTable: React.FC<PotholeTableProps> = ({
             <div className="table-header">
                 <h3>Monitoramento de Operações</h3>
                 <div className="table-actions">
-                    <button
-                        className={`toggle-btn ${myTasksOnly ? 'active' : ''}`}
-                        onClick={() => setMyTasksOnly(!myTasksOnly)}
-                    >
-                        Minhas Tarefas
-                    </button>
                     <div className="search-bar">
                         <Search size={18} />
                         <input
@@ -96,6 +92,15 @@ const PotholeTable: React.FC<PotholeTableProps> = ({
                             <option value="today">Hoje</option>
                             <option value="week">Últimos 7 dias</option>
                             <option value="month">Último mês</option>
+                        </select>
+                    </div>
+                    <div className="filter-select">
+                        <select value={filterTechnicianId} onChange={(e) => setFilterTechnicianId(e.target.value)}>
+                            <option value="all">Todos Técnicos</option>
+                            <option value="unassigned">Não atribuído</option>
+                            {technicians.map(t => (
+                                <option key={t.id} value={t.id}>{t.name}</option>
+                            ))}
                         </select>
                     </div>
                 </div>

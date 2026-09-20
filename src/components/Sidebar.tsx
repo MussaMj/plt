@@ -1,10 +1,12 @@
 import React from 'react';
-import { LayoutDashboard, Database, Map as MapIcon, LogOut, User } from 'lucide-react';
+import { LayoutDashboard, Database, Map as MapIcon, LogOut, User, Users } from 'lucide-react';
 import { supabase } from '../utils/supabase';
 
+type Tab = 'dashboard' | 'map' | 'potholes' | 'team' | 'profile';
+
 interface SidebarProps {
-    activeTab: 'dashboard' | 'map' | 'potholes' | 'profile';
-    setActiveTab: (t: 'dashboard' | 'map' | 'potholes' | 'profile') => void;
+    activeTab: Tab;
+    setActiveTab: (t: Tab) => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => {
@@ -32,6 +34,12 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => {
                     onClick={() => setActiveTab('map')}
                 >
                     <MapIcon size={20} /> Mapa do Terreno
+                </button>
+                <button
+                    className={`nav-item ${activeTab === 'team' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('team')}
+                >
+                    <Users size={20} /> Equipa de Técnicos
                 </button>
                 <button
                     className={`nav-item ${activeTab === 'profile' ? 'active' : ''}`}

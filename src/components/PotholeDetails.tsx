@@ -1,16 +1,19 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
     X, MapPin, User, ClipboardEdit, AlertTriangle, CheckCircle2, Clock,
-    ExternalLink, Camera, FileText, History, Users, Tag
+    ExternalLink, Camera, FileText, History, Users, Tag, Upload
 } from 'lucide-react';
-import { Pothole, ReportNote, ReportNoteRow, mapReportNoteRow } from '../types';
+import { Pothole, ReportNote, ReportNoteRow, mapReportNoteRow, Technician } from '../types';
 import { getCategoryLabel } from '../categories';
 import { supabase } from '../utils/supabase';
 
 interface PotholeDetailsProps {
     pothole: Pothole;
     onClose: () => void;
-    onUpdateStatus: (id: string, s: string, notes?: string, technician?: string) => void;
+    onUpdateStatus: (id: string, s: string, notes?: string, technicianId?: string, repairImageUrl?: string) => void;
+    technicians: Technician[];
+    /** Managers can assign a technician; a technician can only report their own repair. */
+    viewerRole: 'manager' | 'technician';
 }
 
 const statusConfig: Record<string, { label: string; icon: React.ReactNode; color: string; bg: string }> = {
@@ -25,14 +28,17 @@ const severityConfig = {
     low: { label: 'LEVE', color: '#16a34a', bg: 'rgba(22, 163, 74, 0.12)', barColor: '#16a34a' },
 };
 
-const PotholeDetails: React.FC<PotholeDetailsProps> = ({ pothole, onClose, onUpdateStatus }) => {
+const PotholeDetails: React.FC<PotholeDetailsProps> = ({ pothole, onClose, onUpdateStatus, technicians, viewerRole }) => {
     const [notes, setNotes] = useState('');
-    const [technician, setTechnician] = useState(pothole.assignedTechnician || '');
+    const [technicianId, setTechnicianId] = useState(pothole.assignedTechnicianId || '');
     const [selectedStatus, setSelectedStatus] = useState(pothole.status);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [imgError, setImgError] = useState(false);
     const [history, setHistory] = useState<ReportNote[]>([]);
     const [historyLoading, setHistoryLoading] = useState(true);
+    const [repairImageUrl, setRepairImageUrl] = useState(pothole.repairImageUrl || '');
+    const [uploadingPhoto, setUploadingPhoto] = useState(false);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     const sc = statusConfig[pothole.status] || statusConfig.reported;
     const sev = severityConfig[pothole.severity] || severityConfig.low;
@@ -57,9 +63,31 @@ const PotholeDetails: React.FC<PotholeDetailsProps> = ({ pothole, onClose, onUpd
         return () => { alive = false; };
     }, [pothole.id]);
 
+    const handlePhotoSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        setUploadingPhoto(true);
+        try {
+            const path = `repairs/${pothole.id}-${Date.now()}.jpg`;
+            const { error } = await supabase.storage.from('map').upload(path, file, { contentType: file.type });
+            if (error) throw error;
+            const { data } = supabase.storage.from('map').getPublicUrl(path);
+            setRepairImageUrl(data.publicUrl);
+        } catch (err) {
+            console.error('Error uploading repair photo:', err);
+        } finally {
+            setUploadingPhoto(false);
+        }
+    };
+
     const handleSave = async () => {
         setIsSubmitting(true);
-        await onUpdateStatus(pothole.id, selectedStatus, notes, technician);
+        if (viewerRole === 'manager') {
+            await onUpdateStatus(pothole.id, selectedStatus, notes, technicianId);
+        } else {
+            await onUpdateStatus(pothole.id, selectedStatus, notes, undefined, repairImageUrl);
+        }
         setIsSubmitting(false);
         onClose();
     };
@@ -87,14 +115,12 @@ const PotholeDetails: React.FC<PotholeDetailsProps> = ({ pothole, onClose, onUpd
                     <div className="detail-left-col">
                         <div className="detail-img-container" style={{ position: 'relative' }}>
                             {!imgError && pothole.imageUrl ? (
-                                <>
-                                    <img
-                                        src={pothole.imageUrl}
-                                        alt="Evidência fotográfica"
-                                        className="detail-img"
-                                        onError={() => setImgError(true)}
-                                    />
-                                </>
+                                <img
+                                    src={pothole.imageUrl}
+                                    alt="Evidência fotográfica"
+                                    className="detail-img"
+                                    onError={() => setImgError(true)}
+                                />
                             ) : (
                                 <div className="detail-img-placeholder">
                                     <Camera size={40} color="#475569" />
@@ -103,17 +129,44 @@ const PotholeDetails: React.FC<PotholeDetailsProps> = ({ pothole, onClose, onUpd
                             )}
                         </div>
 
-                        {mapsUrl && (
-                            <a
-                                href={mapsUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="detail-maps-btn"
-                            >
-                                <MapPin size={16} />
-                                Abrir no Google Maps
-                                <ExternalLink size={14} />
-                            </a>
+                        {viewerRole === 'technician' ? (
+                            <div className="detail-field" style={{ marginTop: '1rem' }}>
+                                <label className="detail-field-label">
+                                    <Camera size={13} /> Foto da Reparação
+                                </label>
+                                {repairImageUrl && (
+                                    <img
+                                        src={repairImageUrl}
+                                        alt="Reparação concluída"
+                                        style={{ width: '100%', borderRadius: '10px', marginBottom: '0.5rem' }}
+                                    />
+                                )}
+                                <input
+                                    ref={fileInputRef}
+                                    type="file"
+                                    accept="image/*"
+                                    capture="environment"
+                                    onChange={handlePhotoSelected}
+                                    style={{ display: 'none' }}
+                                />
+                                <button
+                                    type="button"
+                                    className="detail-maps-btn"
+                                    onClick={() => fileInputRef.current?.click()}
+                                    disabled={uploadingPhoto}
+                                >
+                                    <Upload size={16} />
+                                    {uploadingPhoto ? 'A carregar...' : repairImageUrl ? 'Substituir Foto' : 'Carregar Foto'}
+                                </button>
+                            </div>
+                        ) : (
+                            mapsUrl && (
+                                <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className="detail-maps-btn">
+                                    <MapPin size={16} />
+                                    Abrir no Google Maps
+                                    <ExternalLink size={14} />
+                                </a>
+                            )
                         )}
 
                         <div className="detail-meta-chips">
@@ -132,17 +185,11 @@ const PotholeDetails: React.FC<PotholeDetailsProps> = ({ pothole, onClose, onUpd
 
                     <div className="detail-right-col">
                         <div className="detail-badges-row">
-                            <div
-                                className="detail-status-pill"
-                                style={{ color: sc.color, background: sc.bg }}
-                            >
+                            <div className="detail-status-pill" style={{ color: sc.color, background: sc.bg }}>
                                 {sc.icon}
                                 {sc.label}
                             </div>
-                            <div
-                                className="detail-severity-pill"
-                                style={{ color: sev.color, background: sev.bg }}
-                            >
+                            <div className="detail-severity-pill" style={{ color: sev.color, background: sev.bg }}>
                                 <AlertTriangle size={13} />
                                 {sev.label}
                             </div>
@@ -152,18 +199,23 @@ const PotholeDetails: React.FC<PotholeDetailsProps> = ({ pothole, onClose, onUpd
                             </div>
                         </div>
 
-                        <div className="detail-field">
-                            <label className="detail-field-label">
-                                <Users size={13} /> Atribuir Equipa/Técnico
-                            </label>
-                            <input
-                                className="detail-select"
-                                type="text"
-                                value={technician}
-                                onChange={(e) => setTechnician(e.target.value)}
-                                placeholder="Nome do técnico responsável"
-                            />
-                        </div>
+                        {viewerRole === 'manager' && (
+                            <div className="detail-field">
+                                <label className="detail-field-label">
+                                    <Users size={13} /> Atribuir Técnico
+                                </label>
+                                <select
+                                    className="detail-select"
+                                    value={technicianId}
+                                    onChange={(e) => setTechnicianId(e.target.value)}
+                                >
+                                    <option value="">Não atribuído</option>
+                                    {technicians.map(t => (
+                                        <option key={t.id} value={t.id}>{t.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
 
                         <div className="detail-field">
                             <label className="detail-field-label">
@@ -172,14 +224,16 @@ const PotholeDetails: React.FC<PotholeDetailsProps> = ({ pothole, onClose, onUpd
                             <p className="detail-field-value detail-desc">{pothole.description}</p>
                         </div>
 
-                        <div className="detail-field">
-                            <label className="detail-field-label">
-                                <User size={13} /> Reportado por
-                            </label>
-                            <p className="detail-field-value">
-                                {pothole.reporterUids?.join(', ') || 'Anónimo'}
-                            </p>
-                        </div>
+                        {viewerRole === 'manager' && (
+                            <div className="detail-field">
+                                <label className="detail-field-label">
+                                    <User size={13} /> Reportado por
+                                </label>
+                                <p className="detail-field-value">
+                                    {pothole.reporterUids?.join(', ') || 'Anónimo'}
+                                </p>
+                            </div>
+                        )}
 
                         <div className="detail-field">
                             <label className="detail-field-label">Atualizar Estado</label>

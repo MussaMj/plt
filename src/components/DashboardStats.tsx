@@ -1,15 +1,23 @@
 import React from 'react';
 import { TrendingUp, Clock, AlertTriangle, CheckCircle2 } from 'lucide-react';
 
+interface TechnicianStat {
+    name: string;
+    assigned: number;
+    inRepair: number;
+    resolved: number;
+}
+
 interface StatsProps {
     total: number;
     resolved: number;
     pending: number;
     critical: number;
     cities: { name: string; count: number }[];
+    byTechnician: TechnicianStat[];
 }
 
-const DashboardStats: React.FC<StatsProps> = ({ total, resolved, pending, critical, cities }) => {
+const DashboardStats: React.FC<StatsProps> = ({ total, resolved, pending, critical, cities, byTechnician }) => {
     return (
         <>
             <section className="stats-grid">
@@ -61,6 +69,29 @@ const DashboardStats: React.FC<StatsProps> = ({ total, resolved, pending, critic
                         </div>
                     ))}
                     {cities.length === 0 && <p className="empty-state">Nenhum dado por cidade disponível.</p>}
+                </div>
+            </section>
+
+            <section className="neighborhood-stats">
+                <h3>Progresso por Técnico</h3>
+                <div className="neighborhood-grid">
+                    {byTechnician.map((t) => (
+                        <div key={t.name} className="neighborhood-card">
+                            <div className="n-info">
+                                <span className="n-name">{t.name}</span>
+                                <span className="n-count">
+                                    {t.assigned} atribuídos · {t.inRepair} em reparo · {t.resolved} resolvidos
+                                </span>
+                            </div>
+                            <div className="n-bar-bg">
+                                <div
+                                    className="n-bar-fill"
+                                    style={{ width: `${Math.min((t.resolved / Math.max(t.assigned, 1)) * 100, 100)}%` }}
+                                />
+                            </div>
+                        </div>
+                    ))}
+                    {byTechnician.length === 0 && <p className="empty-state">Nenhum técnico com reparações atribuídas.</p>}
                 </div>
             </section>
         </>

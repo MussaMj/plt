@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './utils/supabase';
 import './App.css';
 
-import { Pothole, ReportRow, mapReportRow, ManagerProfile } from './types';
+import { Pothole, ReportRow, mapReportRow, ManagerProfile, Technician, TechnicianRow, mapTechnicianRow } from './types';
 import { Session } from '@supabase/supabase-js';
 import { ShieldAlert, LogOut } from 'lucide-react';
 
@@ -11,6 +11,8 @@ import DashboardStats from './components/DashboardStats';
 import PotholeTable from './components/PotholeTable';
 import PotholeMap from './components/PotholeMap';
 import PotholeDetails from './components/PotholeDetails';
+import TeamManager from './components/TeamManager';
+import TechnicianDashboard from './components/TechnicianDashboard';
 import Login from './components/Login';
 import UserProfile from './components/UserProfile';
 
@@ -19,6 +21,7 @@ const PAGE_SIZE = 200;
 const App: React.FC = () => {
     const [session, setSession] = useState<Session | null>(null);
     const [profile, setProfile] = useState<ManagerProfile | null>(null);
+    const [technicianSelf, setTechnicianSelf] = useState<Technician | null>(null);
     const [profileLoading, setProfileLoading] = useState(true);
     const [potholes, setPotholes] = useState<Pothole[]>([]);
     const [loading, setLoading] = useState(true);
@@ -27,9 +30,10 @@ const App: React.FC = () => {
     const [filterCategory, setFilterCategory] = useState<string>('all');
     const [filterCity, setFilterCity] = useState<string>('all');
     const [filterDate, setFilterDate] = useState<string>('all');
-    const [activeTab, setActiveTab] = useState<'dashboard' | 'map' | 'potholes' | 'profile'>('dashboard');
+    const [activeTab, setActiveTab] = useState<'dashboard' | 'map' | 'potholes' | 'team' | 'profile'>('dashboard');
     const [selectedPothole, setSelectedPothole] = useState<Pothole | null>(null);
-    const [myTasksOnly, setMyTasksOnly] = useState(false);
+    const [filterTechnicianId, setFilterTechnicianId] = useState<string>('all');
+    const [technicians, setTechnicians] = useState<Technician[]>([]);
 
     const CURRENT_USER_NAME = session?.user?.user_metadata?.full_name || session?.user?.email || "Admin Central";
     const managerProvince = profile?.province ?? null;
@@ -55,6 +59,18 @@ const App: React.FC = () => {
         setLoading(false);
     }, []);
 
+    const fetchTechnicians = useCallback(async (province: string | null) => {
+        let query = supabase.from('technicians').select('*').order('name', { ascending: true });
+        if (province) query = query.eq('province', province);
+
+        const { data, error } = await query;
+        if (error) {
+            console.error('Error loading technicians:', error);
+            return;
+        }
+        setTechnicians((data as TechnicianRow[]).map(mapTechnicianRow));
+    }, []);
+
     // Auth session
     useEffect(() => {
         supabase.auth.getSession().then(({ data: { session } }) => {
@@ -70,12 +86,15 @@ const App: React.FC = () => {
         return () => subscription.unsubscribe();
     }, []);
 
-    // Manager profile / access control — anyone can hold a Supabase Auth
-    // session (the mobile app's citizens included), only a profiles row with
-    // role='manager' may use this portal.
+    // Access control — anyone can hold a Supabase Auth session (the mobile
+    // app's citizens included). Only a `profiles` row with role='manager'
+    // gets the full portal; failing that, a row in the separate
+    // `technicians` table gets the reduced technician view; otherwise the
+    // account has no business here.
     useEffect(() => {
         if (!session) {
             setProfile(null);
+            setTechnicianSelf(null);
             setProfileLoading(false);
             return;
         }
@@ -86,25 +105,39 @@ const App: React.FC = () => {
             .select('id, role, province, name')
             .eq('id', session.user.id)
             .maybeSingle()
-            .then(({ data, error }) => {
-                if (error) {
-                    console.error('Error loading profile:', error);
-                    setProfile(null);
-                } else {
-                    setProfile(data as ManagerProfile | null);
+            .then(async ({ data, error }) => {
+                if (error) console.error('Error loading profile:', error);
+                const managerProfile = (data as ManagerProfile | null) ?? null;
+                setProfile(managerProfile);
+
+                if (managerProfile?.role === 'manager') {
+                    setTechnicianSelf(null);
+                    setProfileLoading(false);
+                    return;
                 }
+
+                const { data: techData, error: techError } = await supabase
+                    .from('technicians')
+                    .select('*')
+                    .eq('id', session.user.id)
+                    .maybeSingle();
+
+                if (techError) console.error('Error loading technician:', techError);
+                setTechnicianSelf((techData as Technician | null) ?? null);
                 setProfileLoading(false);
             });
     }, [session]);
 
     const isManager = profile?.role === 'manager';
+    const isTechnician = !isManager && technicianSelf !== null;
 
     useEffect(() => {
         if (!session || !isManager) return;
 
         fetchReports(managerProvince);
+        fetchTechnicians(managerProvince);
 
-        const channel = supabase
+        const reportsChannel = supabase
             .channel('reports-changes')
             .on(
                 'postgres_changes',
@@ -115,30 +148,49 @@ const App: React.FC = () => {
             )
             .subscribe();
 
+        const techniciansChannel = supabase
+            .channel('technicians-changes')
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'technicians' },
+                () => {
+                    fetchTechnicians(managerProvince);
+                }
+            )
+            .subscribe();
+
         return () => {
-            supabase.removeChannel(channel);
+            supabase.removeChannel(reportsChannel);
+            supabase.removeChannel(techniciansChannel);
         };
-    }, [fetchReports, session, isManager, managerProvince]);
+    }, [fetchReports, fetchTechnicians, session, isManager, managerProvince]);
 
     const handleUpdateStatus = async (
         id: string,
         newStatus: string,
         notes?: string,
-        technicianName?: string
+        technicianId?: string,
+        repairImageUrl?: string
     ) => {
         try {
-            const pothole = potholes.find(p => p.id === id);
-            if (!pothole) return;
-
             const updateData: Record<string, unknown> = {
                 status: newStatus,
                 updated_at: new Date().toISOString(),
             };
 
-            if (technicianName !== undefined) {
-                updateData.assigned_technician = technicianName === "" ? null : technicianName;
-            } else if (newStatus === 'in_repair' && !pothole.assignedTechnician) {
-                updateData.assigned_technician = CURRENT_USER_NAME;
+            if (technicianId !== undefined) {
+                if (technicianId === '') {
+                    updateData.assigned_technician_id = null;
+                    updateData.assigned_technician = null;
+                } else {
+                    const tech = technicians.find(t => t.id === technicianId);
+                    updateData.assigned_technician_id = technicianId;
+                    updateData.assigned_technician = tech?.name ?? null;
+                }
+            }
+
+            if (repairImageUrl !== undefined) {
+                updateData.repair_image_url = repairImageUrl;
             }
 
             const { error } = await supabase
@@ -179,20 +231,32 @@ const App: React.FC = () => {
             byCity[c] = (byCity[c] || 0) + 1;
         });
 
+        const byTechnician = technicians.map(tech => {
+            const assigned = potholes.filter(p => p.assignedTechnicianId === tech.id);
+            return {
+                name: tech.name,
+                assigned: assigned.length,
+                inRepair: assigned.filter(p => p.status === 'in_repair').length,
+                resolved: assigned.filter(p => p.status === 'repaired').length,
+            };
+        }).filter(t => t.assigned > 0);
+
         return {
             total: potholes.length,
             resolved,
             pending,
             critical: potholes.filter(p => p.severity === 'high' && p.status !== 'repaired').length,
             cities: Object.entries(byCity).map(([name, count]) => ({ name, count })),
+            byTechnician,
         };
-    }, [potholes]);
+    }, [potholes, technicians]);
 
     const filteredPotholes = useMemo(() => {
         return potholes.filter(p => {
             const matchesSearch = (p.address?.toLowerCase() || p.description.toLowerCase()).includes(searchTerm.toLowerCase());
             const matchesStatus = filterStatus === 'all' || p.status === filterStatus;
-            const matchesMyTasks = !myTasksOnly || p.assignedTechnician === CURRENT_USER_NAME;
+            const matchesTechnician = filterTechnicianId === 'all'
+                || (filterTechnicianId === 'unassigned' ? !p.assignedTechnicianId : p.assignedTechnicianId === filterTechnicianId);
             const matchesCategory = filterCategory === 'all' || p.category === filterCategory;
             const matchesCity = filterCity === 'all' || p.city === filterCity;
 
@@ -211,9 +275,9 @@ const App: React.FC = () => {
                 }
             }
 
-            return matchesSearch && matchesStatus && matchesMyTasks && matchesCategory && matchesCity && matchesDate;
+            return matchesSearch && matchesStatus && matchesTechnician && matchesCategory && matchesCity && matchesDate;
         });
-    }, [potholes, searchTerm, filterStatus, filterCategory, filterCity, filterDate, myTasksOnly]);
+    }, [potholes, searchTerm, filterStatus, filterTechnicianId, filterCategory, filterCity, filterDate]);
 
     const allCategories = useMemo(() => {
         const categories = new Set<string>();
@@ -241,6 +305,10 @@ const App: React.FC = () => {
         );
     }
 
+    if (isTechnician && technicianSelf) {
+        return <TechnicianDashboard session={session} technicianName={technicianSelf.name} />;
+    }
+
     if (!isManager) {
         return (
             <div className="login-container">
@@ -250,7 +318,7 @@ const App: React.FC = () => {
                             <ShieldAlert size={22} color="white" />
                         </div>
                         <h2>Acesso Restrito</h2>
-                        <p>Esta conta não tem permissão de gestor para aceder ao Portal de Operações.</p>
+                        <p>Esta conta não tem permissão de gestor ou técnico para aceder ao Portal de Operações.</p>
                     </div>
                     <button
                         className="login-button"
@@ -278,12 +346,14 @@ const App: React.FC = () => {
                             {activeTab === 'dashboard' && 'Visão Geral das Operações'}
                             {activeTab === 'potholes' && 'Painel de Intervenções'}
                             {activeTab === 'map' && 'Mapeamento de Campo'}
+                            {activeTab === 'team' && 'Equipa de Técnicos'}
                             {activeTab === 'profile' && 'Configurações de Conta'}
                         </h2>
                         <p>
                             {activeTab === 'dashboard' && (managerProvince ? `Monitoramento de ${managerProvince}` : 'Monitoramento nacional de infraestrutura crítica')}
                             {activeTab === 'potholes' && 'Gestão e execução de ordens de serviço'}
                             {activeTab === 'map' && 'Localização geográfica de ocorrências'}
+                            {activeTab === 'team' && 'Convide e acompanhe os técnicos responsáveis pelas reparações'}
                             {activeTab === 'profile' && 'Gerencie seus dados pessoais e de acesso'}
                         </p>
                     </div>
@@ -307,6 +377,7 @@ const App: React.FC = () => {
                             pending={stats.pending}
                             critical={stats.critical}
                             cities={stats.cities}
+                            byTechnician={stats.byTechnician}
                         />
 
                         <div className="dashboard-grid">
@@ -345,12 +416,13 @@ const App: React.FC = () => {
                         setFilterCity={setFilterCity}
                         filterDate={filterDate}
                         setFilterDate={setFilterDate}
+                        filterTechnicianId={filterTechnicianId}
+                        setFilterTechnicianId={setFilterTechnicianId}
                         categories={allCategories}
                         cities={allCities}
+                        technicians={technicians}
                         onUpdateStatus={handleUpdateStatus}
                         onShowDetails={setSelectedPothole}
-                        myTasksOnly={myTasksOnly}
-                        setMyTasksOnly={setMyTasksOnly}
                     />
                 )}
 
@@ -367,6 +439,13 @@ const App: React.FC = () => {
                     />
                 )}
 
+                {activeTab === 'team' && (
+                    <TeamManager
+                        technicians={technicians}
+                        managerProvince={managerProvince}
+                    />
+                )}
+
                 {activeTab === 'profile' && (
                     <UserProfile session={session} />
                 )}
@@ -376,6 +455,8 @@ const App: React.FC = () => {
                         pothole={selectedPothole}
                         onClose={() => setSelectedPothole(null)}
                         onUpdateStatus={handleUpdateStatus}
+                        technicians={technicians}
+                        viewerRole="manager"
                     />
                 )}
             </main>

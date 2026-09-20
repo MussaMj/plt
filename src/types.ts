@@ -14,6 +14,8 @@ export interface Pothole {
     imageUrl: string;
     location: { latitude: number; longitude: number };
     assignedTechnician?: string;
+    assignedTechnicianId?: string | null;
+    repairImageUrl?: string | null;
     reporterUids?: string[];
     tags?: string[];
     size?: string;
@@ -42,6 +44,8 @@ export interface ReportRow {
     report_count: number;
     reporter_uids: string[] | null;
     assigned_technician: string | null;
+    assigned_technician_id: string | null;
+    repair_image_url: string | null;
     created_at: string;
     updated_at: string | null;
 }
@@ -60,6 +64,8 @@ export function mapReportRow(row: ReportRow): Pothole {
         imageUrl: row.image_url ?? '',
         location: { latitude: row.latitude, longitude: row.longitude },
         assignedTechnician: row.assigned_technician ?? undefined,
+        assignedTechnicianId: row.assigned_technician_id,
+        repairImageUrl: row.repair_image_url,
         reporterUids: row.reporter_uids ?? undefined,
         tags: row.tags ?? undefined,
         size: row.size ?? undefined,
@@ -101,6 +107,32 @@ export interface ManagerProfile {
     role: string;
     province: string | null;
     name: string | null;
+}
+
+export interface Technician {
+    id: string;
+    name: string;
+    email: string | null;
+    province: string | null;
+    active: boolean;
+}
+
+export interface TechnicianRow {
+    id: string;
+    name: string;
+    email: string | null;
+    province: string | null;
+    active: boolean;
+}
+
+export function mapTechnicianRow(row: TechnicianRow): Technician {
+    return {
+        id: row.id,
+        name: row.name,
+        email: row.email,
+        province: row.province,
+        active: row.active,
+    };
 }
 
 export const MAPUTO_CENTER: [number, number] = [-25.9692, 32.5732];
