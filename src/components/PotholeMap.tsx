@@ -1,28 +1,29 @@
 import React from 'react';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
-import { Search, Filter } from 'lucide-react';
+import { Filter } from 'lucide-react';
 import { Pothole, MAPUTO_CENTER } from '../types';
+import { getCategoryLabel } from '../categories';
 
 interface PotholeMapProps {
     potholes: Pothole[];
     filterStatus: string;
     setFilterStatus: (s: string) => void;
-    filterNeighborhood: string;
-    setFilterNeighborhood: (s: string) => void;
+    filterCategory: string;
+    setFilterCategory: (s: string) => void;
     filterDate: string;
     setFilterDate: (s: string) => void;
-    neighborhoods: string[];
+    categories: string[];
 }
 
 const PotholeMap: React.FC<PotholeMapProps> = ({
     potholes,
     filterStatus,
     setFilterStatus,
-    filterNeighborhood,
-    setFilterNeighborhood,
+    filterCategory,
+    setFilterCategory,
     filterDate,
     setFilterDate,
-    neighborhoods
+    categories
 }) => {
     return (
         <div className="map-view-container" style={{ position: 'relative' }}>
@@ -38,10 +39,10 @@ const PotholeMap: React.FC<PotholeMapProps> = ({
                     </select>
                 </div>
                 <div className="filter-select">
-                    <select value={filterNeighborhood} onChange={(e) => setFilterNeighborhood(e.target.value)}>
-                        <option value="all">Bairro: Todos</option>
-                        {neighborhoods.map(n => (
-                            <option key={n} value={n}>{n}</option>
+                    <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)}>
+                        <option value="all">Categoria: Todas</option>
+                        {categories.map(c => (
+                            <option key={c} value={c}>{getCategoryLabel(c)}</option>
                         ))}
                     </select>
                 </div>
@@ -76,7 +77,7 @@ const PotholeMap: React.FC<PotholeMapProps> = ({
                                     <span className={`popup-severity-dot ${p.severity}`}></span>
                                     <strong>{p.address || 'Localização sem nome'}</strong>
                                 </div>
-                                <p className="popup-desc">{p.description}</p>
+                                <p className="popup-desc">{getCategoryLabel(p.category)} · {p.description}</p>
                                 <div className={`status-tag ${p.status}`}>
                                     {p.status === 'repaired' ? 'RESOLVIDO' :
                                         p.status === 'in_repair' ? 'EM REPARO' : 'PENDENTE'}

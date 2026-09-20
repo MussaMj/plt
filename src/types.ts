@@ -4,7 +4,9 @@ export type PotholeSeverity = 'low' | 'medium' | 'high';
 export interface Pothole {
     id: string;
     address?: string;
-    neighborhood?: string;
+    province?: string | null;
+    city?: string | null;
+    category?: string | null;
     description: string;
     status: PotholeStatus;
     severity: PotholeSeverity;
@@ -26,6 +28,9 @@ export interface ReportRow {
     latitude: number;
     longitude: number;
     address: string | null;
+    province: string | null;
+    city: string | null;
+    category: string | null;
     description: string | null;
     image_url: string | null;
     size: string | null;
@@ -45,6 +50,9 @@ export function mapReportRow(row: ReportRow): Pothole {
     return {
         id: row.id,
         address: row.address ?? undefined,
+        province: row.province,
+        city: row.city,
+        category: row.category,
         description: row.description ?? '',
         status: row.status,
         severity: row.severity,
@@ -62,16 +70,37 @@ export function mapReportRow(row: ReportRow): Pothole {
     };
 }
 
-export interface Technician {
+export interface ReportNote {
     id: string;
-    name: string;
+    reportId: string;
+    authorName: string | null;
+    note: string;
+    createdAt: Date;
 }
 
-export const TECHNICIANS: Technician[] = [
-    { id: 'tech_1', name: 'Carlos Muchanga' },
-    { id: 'tech_2', name: 'Ana Mabunda' },
-    { id: 'tech_3', name: 'Zélia Mondlane' },
-    { id: 'tech_4', name: 'Pedro Sitoe' },
-];
+export interface ReportNoteRow {
+    id: string;
+    report_id: string;
+    author_name: string | null;
+    note: string;
+    created_at: string;
+}
+
+export function mapReportNoteRow(row: ReportNoteRow): ReportNote {
+    return {
+        id: row.id,
+        reportId: row.report_id,
+        authorName: row.author_name,
+        note: row.note,
+        createdAt: new Date(row.created_at),
+    };
+}
+
+export interface ManagerProfile {
+    id: string;
+    role: string;
+    province: string | null;
+    name: string | null;
+}
 
 export const MAPUTO_CENTER: [number, number] = [-25.9692, 32.5732];

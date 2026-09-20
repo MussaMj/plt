@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     X, MapPin, User, ClipboardEdit, AlertTriangle, CheckCircle2, Clock,
-    ExternalLink, Camera, FileText, History, Users
+    ExternalLink, Camera, FileText, History, Users, Tag
 } from 'lucide-react';
-import { Pothole, TECHNICIANS } from '../types';
+import { Pothole, ReportNote, ReportNoteRow, mapReportNoteRow } from '../types';
+import { getCategoryLabel } from '../categories';
+import { supabase } from '../utils/supabase';
 
 interface PotholeDetailsProps {
     pothole: Pothole;
@@ -25,17 +27,39 @@ const severityConfig = {
 
 const PotholeDetails: React.FC<PotholeDetailsProps> = ({ pothole, onClose, onUpdateStatus }) => {
     const [notes, setNotes] = useState('');
-    const [selectedTech, setSelectedTech] = useState(pothole.assignedTechnician || '');
+    const [technician, setTechnician] = useState(pothole.assignedTechnician || '');
     const [selectedStatus, setSelectedStatus] = useState(pothole.status);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [imgError, setImgError] = useState(false);
+    const [history, setHistory] = useState<ReportNote[]>([]);
+    const [historyLoading, setHistoryLoading] = useState(true);
 
     const sc = statusConfig[pothole.status] || statusConfig.reported;
     const sev = severityConfig[pothole.severity] || severityConfig.low;
 
+    useEffect(() => {
+        let alive = true;
+        setHistoryLoading(true);
+        supabase
+            .from('report_notes')
+            .select('*')
+            .eq('report_id', pothole.id)
+            .order('created_at', { ascending: false })
+            .then(({ data, error }) => {
+                if (!alive) return;
+                if (error) {
+                    console.error('Error loading history:', error);
+                } else {
+                    setHistory((data as ReportNoteRow[]).map(mapReportNoteRow));
+                }
+                setHistoryLoading(false);
+            });
+        return () => { alive = false; };
+    }, [pothole.id]);
+
     const handleSave = async () => {
         setIsSubmitting(true);
-        await onUpdateStatus(pothole.id, selectedStatus, notes, selectedTech);
+        await onUpdateStatus(pothole.id, selectedStatus, notes, technician);
         setIsSubmitting(false);
         onClose();
     };
@@ -122,22 +146,23 @@ const PotholeDetails: React.FC<PotholeDetailsProps> = ({ pothole, onClose, onUpd
                                 <AlertTriangle size={13} />
                                 {sev.label}
                             </div>
+                            <div className="detail-severity-pill" style={{ color: '#475569', background: 'rgba(71, 85, 105, 0.08)' }}>
+                                <Tag size={13} />
+                                {getCategoryLabel(pothole.category)}
+                            </div>
                         </div>
 
                         <div className="detail-field">
                             <label className="detail-field-label">
-                                <Users size={13} /> Atribuir Equipa
+                                <Users size={13} /> Atribuir Equipa/Técnico
                             </label>
-                            <select
+                            <input
                                 className="detail-select"
-                                value={selectedTech}
-                                onChange={(e) => setSelectedTech(e.target.value)}
-                            >
-                                <option value="">Não atribuído</option>
-                                {TECHNICIANS.map(t => (
-                                    <option key={t.id} value={t.name}>{t.name}</option>
-                                ))}
-                            </select>
+                                type="text"
+                                value={technician}
+                                onChange={(e) => setTechnician(e.target.value)}
+                                placeholder="Nome do técnico responsável"
+                            />
                         </div>
 
                         <div className="detail-field">
@@ -193,15 +218,32 @@ const PotholeDetails: React.FC<PotholeDetailsProps> = ({ pothole, onClose, onUpd
                         <div className="activity-history">
                             <h4><History size={16} /> Histórico de Atividades</h4>
                             <div className="log-list">
-                                <p className="empty-state">Sem histórico disponível.</p>
+                                {historyLoading ? (
+                                    <p className="empty-state">A carregar...</p>
+                                ) : history.length === 0 ? (
+                                    <p className="empty-state">Sem histórico disponível.</p>
+                                ) : (
+                                    history.map(h => (
+                                        <div key={h.id} className="log-item">
+                                            <div className="log-dot" />
+                                            <div className="log-content">
+                                                <div className="log-header">
+                                                    <span className="log-user">{h.authorName || 'Gestor'}</span>
+                                                    <span className="log-time">{h.createdAt.toLocaleString('pt-MZ')}</span>
+                                                </div>
+                                                <p className="log-notes">{h.note}</p>
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
                             </div>
                         </div>
 
                         <div className="detail-footer-actions">
                             <button className="detail-back-btn" onClick={onClose} disabled={isSubmitting}>Cancelar</button>
-                            <button 
-                                className="detail-save-btn" 
-                                onClick={handleSave} 
+                            <button
+                                className="detail-save-btn"
+                                onClick={handleSave}
                                 disabled={isSubmitting}
                                 style={{
                                     backgroundColor: '#2563eb',

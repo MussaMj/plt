@@ -6,10 +6,10 @@ interface StatsProps {
     resolved: number;
     pending: number;
     critical: number;
-    neighborhoods: { name: string; count: number }[];
+    cities: { name: string; count: number }[];
 }
 
-const DashboardStats: React.FC<StatsProps> = ({ total, resolved, pending, critical, neighborhoods }) => {
+const DashboardStats: React.FC<StatsProps> = ({ total, resolved, pending, critical, cities }) => {
     return (
         <>
             <section className="stats-grid">
@@ -44,9 +44,9 @@ const DashboardStats: React.FC<StatsProps> = ({ total, resolved, pending, critic
             </section>
 
             <section className="neighborhood-stats">
-                <h3>Estatísticas por Bairro</h3>
+                <h3>Estatísticas por Cidade</h3>
                 <div className="neighborhood-grid">
-                    {neighborhoods.map((n) => (
+                    {cities.map((n) => (
                         <div key={n.name} className="neighborhood-card">
                             <div className="n-info">
                                 <span className="n-name">{n.name}</span>
@@ -60,7 +60,7 @@ const DashboardStats: React.FC<StatsProps> = ({ total, resolved, pending, critic
                             </div>
                         </div>
                     ))}
-                    {neighborhoods.length === 0 && <p className="empty-state">Nenhum dado por bairro disponível.</p>}
+                    {cities.length === 0 && <p className="empty-state">Nenhum dado por cidade disponível.</p>}
                 </div>
             </section>
         </>

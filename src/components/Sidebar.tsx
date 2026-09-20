@@ -1,14 +1,13 @@
 import React from 'react';
-import { LayoutDashboard, Database, Map as MapIcon, Settings, LogOut, User } from 'lucide-react';
+import { LayoutDashboard, Database, Map as MapIcon, LogOut, User } from 'lucide-react';
 import { supabase } from '../utils/supabase';
 
 interface SidebarProps {
     activeTab: 'dashboard' | 'map' | 'potholes' | 'profile';
     setActiveTab: (t: 'dashboard' | 'map' | 'potholes' | 'profile') => void;
-    onSeedData: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, onSeedData }) => {
+const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => {
     return (
         <aside className="sidebar">
             <div className="logo">
@@ -42,13 +41,6 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, onSeedData }
                 </button>
 
                 <div className="sidebar-footer">
-                    <button
-                        className="nav-item utility"
-                        onClick={onSeedData}
-                        title="Ferramenta de Suporte"
-                    >
-                        <Settings size={18} /> Manutenção do Sistema
-                    </button>
                     <button
                         className="nav-item utility"
                         onClick={() => supabase.auth.signOut()}

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Search, Filter, ExternalLink, MapPin, CheckCircle, Play } from 'lucide-react';
 import { Pothole } from '../types';
+import { getCategoryLabel } from '../categories';
 
 interface PotholeTableProps {
     potholes: Pothole[];
@@ -9,11 +10,14 @@ interface PotholeTableProps {
     setSearchTerm: (s: string) => void;
     filterStatus: string;
     setFilterStatus: (s: string) => void;
-    filterNeighborhood: string;
-    setFilterNeighborhood: (s: string) => void;
+    filterCategory: string;
+    setFilterCategory: (s: string) => void;
+    filterCity: string;
+    setFilterCity: (s: string) => void;
     filterDate: string;
     setFilterDate: (s: string) => void;
-    neighborhoods: string[];
+    categories: string[];
+    cities: string[];
     onUpdateStatus: (id: string, s: string, notes?: string, tech?: string) => void;
     onShowDetails: (pothole: Pothole) => void;
     myTasksOnly: boolean;
@@ -27,11 +31,14 @@ const PotholeTable: React.FC<PotholeTableProps> = ({
     setSearchTerm,
     filterStatus,
     setFilterStatus,
-    filterNeighborhood,
-    setFilterNeighborhood,
+    filterCategory,
+    setFilterCategory,
+    filterCity,
+    setFilterCity,
     filterDate,
     setFilterDate,
-    neighborhoods,
+    categories,
+    cities,
     onUpdateStatus,
     onShowDetails,
     myTasksOnly,
@@ -68,10 +75,18 @@ const PotholeTable: React.FC<PotholeTableProps> = ({
                         </select>
                     </div>
                     <div className="filter-select">
-                        <select value={filterNeighborhood} onChange={(e) => setFilterNeighborhood(e.target.value)}>
-                            <option value="all">Todos Bairros</option>
-                            {neighborhoods.map(n => (
-                                <option key={n} value={n}>{n}</option>
+                        <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)}>
+                            <option value="all">Todas Categorias</option>
+                            {categories.map(c => (
+                                <option key={c} value={c}>{getCategoryLabel(c)}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div className="filter-select">
+                        <select value={filterCity} onChange={(e) => setFilterCity(e.target.value)}>
+                            <option value="all">Todas Cidades</option>
+                            {cities.map(c => (
+                                <option key={c} value={c}>{c}</option>
                             ))}
                         </select>
                     </div>
@@ -96,6 +111,7 @@ const PotholeTable: React.FC<PotholeTableProps> = ({
                         <thead>
                             <tr>
                                 <th>Localização</th>
+                                <th>Categoria</th>
                                 <th>Prioridade</th>
                                 <th>Responsável</th>
                                 <th>Estado</th>
@@ -108,9 +124,12 @@ const PotholeTable: React.FC<PotholeTableProps> = ({
                                     <td>
                                         <div className="loc-cell">
                                             <span className="addressText">{p.address || 'Coord. Geográficas'}</span>
-                                            <span className="descText">{p.description}</span>
+                                            <span className="descText">
+                                                {[p.city, p.province].filter(Boolean).join(', ') || p.description}
+                                            </span>
                                         </div>
                                     </td>
+                                    <td>{getCategoryLabel(p.category)}</td>
                                     <td>
                                         <span className={`severity-badge ${p.severity}`}>
                                             {p.severity === 'high' ? 'Crítica' : p.severity === 'medium' ? 'Moderada' : 'Leve'}
