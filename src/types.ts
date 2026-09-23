@@ -135,4 +135,31 @@ export function mapTechnicianRow(row: TechnicianRow): Technician {
     };
 }
 
+export interface TechnicianStat {
+    id: string;
+    name: string | null;
+    assigned: number;
+    inRepair: number;
+    resolved: number;
+}
+
+/** Shape returned by the `report_stats` database function. */
+export interface ReportStats {
+    total: number;
+    resolved: number;
+    pending: number;
+    critical: number;
+    cities: { name: string; count: number }[];
+    technicians: TechnicianStat[];
+}
+
+export const EMPTY_STATS: ReportStats = {
+    total: 0,
+    resolved: 0,
+    pending: 0,
+    critical: 0,
+    cities: [],
+    technicians: [],
+};
+
 export const MAPUTO_CENTER: [number, number] = [-25.9692, 32.5732];

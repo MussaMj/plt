@@ -1,44 +1,35 @@
 import React from 'react';
 import { TrendingUp, Clock, AlertTriangle, CheckCircle2 } from 'lucide-react';
-
-interface TechnicianStat {
-    name: string;
-    assigned: number;
-    inRepair: number;
-    resolved: number;
-}
+import { ReportStats } from '../types';
 
 interface StatsProps {
-    total: number;
-    resolved: number;
-    pending: number;
-    critical: number;
-    cities: { name: string; count: number }[];
-    byTechnician: TechnicianStat[];
+    stats: ReportStats;
 }
 
-const DashboardStats: React.FC<StatsProps> = ({ total, resolved, pending, critical, cities, byTechnician }) => {
+const DashboardStats: React.FC<StatsProps> = ({ stats }) => {
+    const { total, resolved, pending, critical, cities, technicians } = stats;
+
     return (
         <>
             <section className="stats-grid">
                 <div className="stat-card">
                     <div className="stat-icon blue"><TrendingUp size={24} /></div>
                     <div className="stat-data">
-                        <span className="stat-label">Total Reportes</span>
+                        <span className="stat-label">Total de Ocorrências</span>
                         <span className="stat-value">{total}</span>
                     </div>
                 </div>
                 <div className="stat-card">
                     <div className="stat-icon green"><CheckCircle2 size={24} /></div>
                     <div className="stat-data">
-                        <span className="stat-label">Buracos Resolvidos</span>
+                        <span className="stat-label">Ocorrências Resolvidas</span>
                         <span className="stat-value">{resolved}</span>
                     </div>
                 </div>
                 <div className="stat-card">
                     <div className="stat-icon yellow"><Clock size={24} /></div>
                     <div className="stat-data">
-                        <span className="stat-label">Buracos Pendentes</span>
+                        <span className="stat-label">Ocorrências Pendentes</span>
                         <span className="stat-value">{pending}</span>
                     </div>
                 </div>
@@ -75,10 +66,10 @@ const DashboardStats: React.FC<StatsProps> = ({ total, resolved, pending, critic
             <section className="neighborhood-stats">
                 <h3>Progresso por Técnico</h3>
                 <div className="neighborhood-grid">
-                    {byTechnician.map((t) => (
-                        <div key={t.name} className="neighborhood-card">
+                    {technicians.map((t) => (
+                        <div key={t.id} className="neighborhood-card">
                             <div className="n-info">
-                                <span className="n-name">{t.name}</span>
+                                <span className="n-name">{t.name || 'Técnico'}</span>
                                 <span className="n-count">
                                     {t.assigned} atribuídos · {t.inRepair} em reparo · {t.resolved} resolvidos
                                 </span>
@@ -91,7 +82,7 @@ const DashboardStats: React.FC<StatsProps> = ({ total, resolved, pending, critic
                             </div>
                         </div>
                     ))}
-                    {byTechnician.length === 0 && <p className="empty-state">Nenhum técnico com reparações atribuídas.</p>}
+                    {technicians.length === 0 && <p className="empty-state">Nenhum técnico com reparações atribuídas.</p>}
                 </div>
             </section>
         </>

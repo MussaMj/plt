@@ -5,7 +5,10 @@ import { getCategoryLabel } from '../categories';
 
 interface PotholeTableProps {
     potholes: Pothole[];
+    totalCount: number;
     loading: boolean;
+    loadingMore: boolean;
+    onLoadMore: () => void;
     searchTerm: string;
     setSearchTerm: (s: string) => void;
     filterStatus: string;
@@ -27,7 +30,10 @@ interface PotholeTableProps {
 
 const PotholeTable: React.FC<PotholeTableProps> = ({
     potholes,
+    totalCount,
     loading,
+    loadingMore,
+    onLoadMore,
     searchTerm,
     setSearchTerm,
     filterStatus,
@@ -50,7 +56,14 @@ const PotholeTable: React.FC<PotholeTableProps> = ({
     return (
         <section className="table-section">
             <div className="table-header">
-                <h3>Monitoramento de Operações</h3>
+                <h3>
+                    Monitoramento de Operações
+                    {!loading && (
+                        <span style={{ fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-secondary)', marginLeft: '0.75rem' }}>
+                            {potholes.length} de {totalCount}
+                        </span>
+                    )}
+                </h3>
                 <div className="table-actions">
                     <div className="search-bar">
                         <Search size={18} />
@@ -192,6 +205,13 @@ const PotholeTable: React.FC<PotholeTableProps> = ({
                             ))}
                         </tbody>
                     </table>
+                )}
+                {!loading && potholes.length < totalCount && (
+                    <div style={{ textAlign: 'center', padding: '1rem' }}>
+                        <button className="toggle-btn" onClick={onLoadMore} disabled={loadingMore}>
+                            {loadingMore ? 'A carregar...' : `Carregar mais (${totalCount - potholes.length} restantes)`}
+                        </button>
+                    </div>
                 )}
             </div>
         </section>

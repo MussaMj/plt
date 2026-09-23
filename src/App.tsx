@@ -1,75 +1,172 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { supabase } from './utils/supabase';
+import React, { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react';
+import { supabase, initialAuthLinkType, AuthLinkType } from './utils/supabase';
 import './App.css';
 
-import { Pothole, ReportRow, mapReportRow, ManagerProfile, Technician, TechnicianRow, mapTechnicianRow } from './types';
+import { Pothole, ReportRow, mapReportRow, ManagerProfile, Technician, TechnicianRow, mapTechnicianRow, ReportStats, EMPTY_STATS } from './types';
+import { CATEGORY_LABELS } from './categories';
+import { provinceOrFilter } from './utils/province';
 import { Session } from '@supabase/supabase-js';
-import { ShieldAlert, LogOut } from 'lucide-react';
+import { ShieldAlert, LogOut, AlertCircle } from 'lucide-react';
 
 import Sidebar from './components/Sidebar';
 import DashboardStats from './components/DashboardStats';
 import PotholeTable from './components/PotholeTable';
-import PotholeMap from './components/PotholeMap';
 import PotholeDetails from './components/PotholeDetails';
-import TeamManager from './components/TeamManager';
-import TechnicianDashboard from './components/TechnicianDashboard';
 import Login from './components/Login';
-import UserProfile from './components/UserProfile';
+import SetPassword from './components/SetPassword';
+
+// Heavy / role-specific screens are split out of the main bundle.
+const PotholeMap = lazy(() => import('./components/PotholeMap'));
+const TeamManager = lazy(() => import('./components/TeamManager'));
+const UserProfile = lazy(() => import('./components/UserProfile'));
+const TechnicianDashboard = lazy(() => import('./components/TechnicianDashboard'));
 
 const PAGE_SIZE = 200;
+
+interface Filters {
+    status: string;
+    category: string;
+    city: string;
+    date: string;
+    technicianId: string;
+    search: string;
+}
+
+const DEFAULT_FILTERS: Filters = { status: 'all', category: 'all', city: 'all', date: 'all', technicianId: 'all', search: '' };
+
+function dateFloor(date: string): string | null {
+    const now = new Date();
+    if (date === 'today') {
+        const d = new Date(now);
+        d.setHours(0, 0, 0, 0);
+        return d.toISOString();
+    }
+    if (date === 'week') return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    if (date === 'month') return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    return null;
+}
+
+const Fallback: React.FC = () => <div className="loading-state">A carregar...</div>;
 
 const App: React.FC = () => {
     const [session, setSession] = useState<Session | null>(null);
     const [profile, setProfile] = useState<ManagerProfile | null>(null);
     const [technicianSelf, setTechnicianSelf] = useState<Technician | null>(null);
     const [profileLoading, setProfileLoading] = useState(true);
+    const [passwordSetup, setPasswordSetup] = useState<AuthLinkType>(initialAuthLinkType);
+
     const [potholes, setPotholes] = useState<Pothole[]>([]);
+    const [totalCount, setTotalCount] = useState(0);
+    const [criticalList, setCriticalList] = useState<Pothole[]>([]);
+    const [stats, setStats] = useState<ReportStats>(EMPTY_STATS);
+    const [technicians, setTechnicians] = useState<Technician[]>([]);
     const [loading, setLoading] = useState(true);
-    const [searchTerm, setSearchTerm] = useState('');
-    const [filterStatus, setFilterStatus] = useState<string>('all');
-    const [filterCategory, setFilterCategory] = useState<string>('all');
-    const [filterCity, setFilterCity] = useState<string>('all');
-    const [filterDate, setFilterDate] = useState<string>('all');
+    const [loadingMore, setLoadingMore] = useState(false);
+    const [loadError, setLoadError] = useState<string | null>(null);
+
+    const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+    const [searchInput, setSearchInput] = useState('');
     const [activeTab, setActiveTab] = useState<'dashboard' | 'map' | 'potholes' | 'team' | 'profile'>('dashboard');
     const [selectedPothole, setSelectedPothole] = useState<Pothole | null>(null);
-    const [filterTechnicianId, setFilterTechnicianId] = useState<string>('all');
-    const [technicians, setTechnicians] = useState<Technician[]>([]);
 
-    const CURRENT_USER_NAME = session?.user?.user_metadata?.full_name || session?.user?.email || "Admin Central";
+    const CURRENT_USER_NAME = session?.user?.user_metadata?.full_name || profile?.name || session?.user?.email || 'Gestor';
     const managerProvince = profile?.province ?? null;
 
-    const fetchReports = useCallback(async (province: string | null) => {
-        let query = supabase
+    const setFilter = (key: keyof Filters) => (value: string) => setFilters(f => ({ ...f, [key]: value }));
+
+    // Debounce the free-text search so we don't hit the database per keystroke.
+    useEffect(() => {
+        const t = setTimeout(() => setFilters(f => (f.search === searchInput ? f : { ...f, search: searchInput })), 350);
+        return () => clearTimeout(t);
+    }, [searchInput]);
+
+    const buildQuery = useCallback((from: number, to: number) => {
+        let q = supabase
             .from('reports')
-            .select('*')
+            .select('*', { count: 'exact' })
             .order('created_at', { ascending: false })
-            .range(0, PAGE_SIZE - 1);
+            .range(from, to);
 
-        if (province) query = query.eq('province', province);
+        if (managerProvince) q = q.or(provinceOrFilter(managerProvince));
+        if (filters.status !== 'all') q = q.eq('status', filters.status);
+        if (filters.category !== 'all') q = q.eq('category', filters.category);
+        if (filters.city !== 'all') q = q.eq('city', filters.city);
+        if (filters.technicianId === 'unassigned') q = q.is('assigned_technician_id', null);
+        else if (filters.technicianId !== 'all') q = q.eq('assigned_technician_id', filters.technicianId);
+        const floor = dateFloor(filters.date);
+        if (floor) q = q.gte('created_at', floor);
+        const term = filters.search.trim().replace(/[%*,()]/g, '');
+        if (term) q = q.ilike('address', `%${term}%`);
+        return q;
+    }, [managerProvince, filters]);
 
-        const { data, error } = await query;
+    const loadedCount = useRef(PAGE_SIZE);
 
+    /** Loads the first `count` rows for the current filters (used on filter change and after realtime events). */
+    const reloadReports = useCallback(async (count = PAGE_SIZE) => {
+        const { data, error, count: total } = await buildQuery(0, count - 1);
         if (error) {
             console.error('Error loading reports:', error);
+            setLoadError('Não foi possível carregar as ocorrências. Verifique a ligação ou contacte o suporte.');
             setLoading(false);
             return;
         }
-
+        setLoadError(null);
+        loadedCount.current = Math.max(count, PAGE_SIZE);
         setPotholes((data as ReportRow[]).map(mapReportRow));
+        setTotalCount(total ?? 0);
         setLoading(false);
-    }, []);
+    }, [buildQuery]);
 
-    const fetchTechnicians = useCallback(async (province: string | null) => {
-        let query = supabase.from('technicians').select('*').order('name', { ascending: true });
-        if (province) query = query.eq('province', province);
+    const loadMore = async () => {
+        setLoadingMore(true);
+        const from = potholes.length;
+        const { data, error } = await buildQuery(from, from + PAGE_SIZE - 1);
+        setLoadingMore(false);
+        if (error) {
+            console.error('Error loading more reports:', error);
+            return;
+        }
+        loadedCount.current = from + (data?.length ?? 0);
+        setPotholes(prev => [...prev, ...(data as ReportRow[]).map(mapReportRow)]);
+    };
 
-        const { data, error } = await query;
+    const fetchStats = useCallback(async () => {
+        const { data, error } = await supabase.rpc('report_stats', { p_province: managerProvince });
+        if (error) {
+            console.error('Error loading stats:', error);
+            return;
+        }
+        setStats({ ...EMPTY_STATS, ...(data as ReportStats) });
+    }, [managerProvince]);
+
+    const fetchCritical = useCallback(async () => {
+        let q = supabase
+            .from('reports')
+            .select('*')
+            .eq('severity', 'high')
+            .neq('status', 'repaired')
+            .order('created_at', { ascending: false })
+            .limit(6);
+        if (managerProvince) q = q.or(provinceOrFilter(managerProvince));
+        const { data, error } = await q;
+        if (error) {
+            console.error('Error loading critical reports:', error);
+            return;
+        }
+        setCriticalList((data as ReportRow[]).map(mapReportRow));
+    }, [managerProvince]);
+
+    const fetchTechnicians = useCallback(async () => {
+        let q = supabase.from('technicians').select('*').order('name', { ascending: true });
+        if (managerProvince) q = q.or(provinceOrFilter(managerProvince));
+        const { data, error } = await q;
         if (error) {
             console.error('Error loading technicians:', error);
             return;
         }
         setTechnicians((data as TechnicianRow[]).map(mapTechnicianRow));
-    }, []);
+    }, [managerProvince]);
 
     // Auth session
     useEffect(() => {
@@ -79,8 +176,9 @@ const App: React.FC = () => {
 
         const {
             data: { subscription },
-        } = supabase.auth.onAuthStateChange((_event, session) => {
+        } = supabase.auth.onAuthStateChange((event, session) => {
             setSession(session);
+            if (event === 'PASSWORD_RECOVERY') setPasswordSetup('recovery');
         });
 
         return () => subscription.unsubscribe();
@@ -88,7 +186,7 @@ const App: React.FC = () => {
 
     // Access control — anyone can hold a Supabase Auth session (the mobile
     // app's citizens included). Only a `profiles` row with role='manager'
-    // gets the full portal; failing that, a row in the separate
+    // gets the full portal; failing that, an *active* row in the separate
     // `technicians` table gets the reduced technician view; otherwise the
     // account has no business here.
     useEffect(() => {
@@ -123,47 +221,65 @@ const App: React.FC = () => {
                     .maybeSingle();
 
                 if (techError) console.error('Error loading technician:', techError);
-                setTechnicianSelf((techData as Technician | null) ?? null);
+                setTechnicianSelf(techData ? mapTechnicianRow(techData as TechnicianRow) : null);
                 setProfileLoading(false);
             });
     }, [session]);
 
     const isManager = profile?.role === 'manager';
-    const isTechnician = !isManager && technicianSelf !== null;
+    const isTechnician = !isManager && technicianSelf !== null && technicianSelf.active;
+    const technicianDeactivated = !isManager && technicianSelf !== null && !technicianSelf.active;
+
+    // Reload the list whenever the filters (or the manager's scope) change.
+    useEffect(() => {
+        if (!session || !isManager) return;
+        setLoading(true);
+        reloadReports(PAGE_SIZE);
+    }, [session, isManager, reloadReports]);
+
+    // Keep everything else fresh, and react to realtime changes (debounced —
+    // an import or a burst of updates shouldn't trigger a refetch per row).
+    const reloadReportsRef = useRef(reloadReports);
+    reloadReportsRef.current = reloadReports;
 
     useEffect(() => {
         if (!session || !isManager) return;
 
-        fetchReports(managerProvince);
-        fetchTechnicians(managerProvince);
+        fetchStats();
+        fetchCritical();
+        fetchTechnicians();
 
-        const reportsChannel = supabase
-            .channel('reports-changes')
-            .on(
-                'postgres_changes',
-                { event: '*', schema: 'public', table: 'reports' },
-                () => {
-                    fetchReports(managerProvince);
-                }
-            )
-            .subscribe();
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        const refreshAll = () => {
+            if (timer) clearTimeout(timer);
+            timer = setTimeout(() => {
+                reloadReportsRef.current(loadedCount.current);
+                fetchStats();
+                fetchCritical();
+            }, 500);
+        };
 
-        const techniciansChannel = supabase
-            .channel('technicians-changes')
-            .on(
-                'postgres_changes',
-                { event: '*', schema: 'public', table: 'technicians' },
-                () => {
-                    fetchTechnicians(managerProvince);
-                }
-            )
+        const channel = supabase
+            .channel('portal-changes')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'reports' }, refreshAll)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'technicians' }, fetchTechnicians)
             .subscribe();
 
         return () => {
-            supabase.removeChannel(reportsChannel);
-            supabase.removeChannel(techniciansChannel);
+            if (timer) clearTimeout(timer);
+            supabase.removeChannel(channel);
         };
-    }, [fetchReports, fetchTechnicians, session, isManager, managerProvince]);
+    }, [session, isManager, fetchStats, fetchCritical, fetchTechnicians]);
+
+    const handleAddNote = async (reportId: string, note: string) => {
+        const { error } = await supabase.from('report_notes').insert({
+            report_id: reportId,
+            author_id: session?.user.id,
+            author_name: CURRENT_USER_NAME,
+            note,
+        });
+        if (error) console.error('Error saving note:', error);
+    };
 
     const handleUpdateStatus = async (
         id: string,
@@ -200,6 +316,7 @@ const App: React.FC = () => {
 
             if (error) {
                 console.error('Error updating status:', error);
+                setLoadError('Não foi possível guardar a alteração: ' + error.message);
                 return;
             }
 
@@ -210,86 +327,6 @@ const App: React.FC = () => {
             console.error('Error updating status:', error);
         }
     };
-
-    const handleAddNote = async (reportId: string, note: string) => {
-        const { error } = await supabase.from('report_notes').insert({
-            report_id: reportId,
-            author_id: session?.user.id,
-            author_name: CURRENT_USER_NAME,
-            note,
-        });
-        if (error) console.error('Error saving note:', error);
-    };
-
-    const stats = useMemo(() => {
-        const resolved = potholes.filter(p => p.status === 'repaired').length;
-        const pending = potholes.filter(p => p.status === 'reported').length;
-
-        const byCity: Record<string, number> = {};
-        potholes.forEach(p => {
-            const c = p.city || 'Sem cidade';
-            byCity[c] = (byCity[c] || 0) + 1;
-        });
-
-        const byTechnician = technicians.map(tech => {
-            const assigned = potholes.filter(p => p.assignedTechnicianId === tech.id);
-            return {
-                name: tech.name,
-                assigned: assigned.length,
-                inRepair: assigned.filter(p => p.status === 'in_repair').length,
-                resolved: assigned.filter(p => p.status === 'repaired').length,
-            };
-        }).filter(t => t.assigned > 0);
-
-        return {
-            total: potholes.length,
-            resolved,
-            pending,
-            critical: potholes.filter(p => p.severity === 'high' && p.status !== 'repaired').length,
-            cities: Object.entries(byCity).map(([name, count]) => ({ name, count })),
-            byTechnician,
-        };
-    }, [potholes, technicians]);
-
-    const filteredPotholes = useMemo(() => {
-        return potholes.filter(p => {
-            const matchesSearch = (p.address?.toLowerCase() || p.description.toLowerCase()).includes(searchTerm.toLowerCase());
-            const matchesStatus = filterStatus === 'all' || p.status === filterStatus;
-            const matchesTechnician = filterTechnicianId === 'all'
-                || (filterTechnicianId === 'unassigned' ? !p.assignedTechnicianId : p.assignedTechnicianId === filterTechnicianId);
-            const matchesCategory = filterCategory === 'all' || p.category === filterCategory;
-            const matchesCity = filterCity === 'all' || p.city === filterCity;
-
-            let matchesDate = true;
-            if (filterDate !== 'all') {
-                const now = new Date();
-                const createdAt = p.createdAt;
-                if (filterDate === 'today') {
-                    matchesDate = createdAt.toDateString() === now.toDateString();
-                } else if (filterDate === 'week') {
-                    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-                    matchesDate = createdAt >= weekAgo;
-                } else if (filterDate === 'month') {
-                    const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-                    matchesDate = createdAt >= monthAgo;
-                }
-            }
-
-            return matchesSearch && matchesStatus && matchesTechnician && matchesCategory && matchesCity && matchesDate;
-        });
-    }, [potholes, searchTerm, filterStatus, filterTechnicianId, filterCategory, filterCity, filterDate]);
-
-    const allCategories = useMemo(() => {
-        const categories = new Set<string>();
-        potholes.forEach(p => { if (p.category) categories.add(p.category); });
-        return Array.from(categories).sort();
-    }, [potholes]);
-
-    const allCities = useMemo(() => {
-        const cities = new Set<string>();
-        potholes.forEach(p => { if (p.city) cities.add(p.city); });
-        return Array.from(cities).sort();
-    }, [potholes]);
 
     if (!session) {
         return <Login />;
@@ -305,8 +342,24 @@ const App: React.FC = () => {
         );
     }
 
+    if (passwordSetup) {
+        return (
+            <SetPassword
+                mode={passwordSetup}
+                onDone={() => {
+                    setPasswordSetup(null);
+                    window.history.replaceState(null, '', window.location.pathname);
+                }}
+            />
+        );
+    }
+
     if (isTechnician && technicianSelf) {
-        return <TechnicianDashboard session={session} technicianName={technicianSelf.name} />;
+        return (
+            <Suspense fallback={<Fallback />}>
+                <TechnicianDashboard session={session} technicianName={technicianSelf.name} />
+            </Suspense>
+        );
     }
 
     if (!isManager) {
@@ -318,7 +371,11 @@ const App: React.FC = () => {
                             <ShieldAlert size={22} color="white" />
                         </div>
                         <h2>Acesso Restrito</h2>
-                        <p>Esta conta não tem permissão de gestor ou técnico para aceder ao Portal de Operações.</p>
+                        <p>
+                            {technicianDeactivated
+                                ? 'A sua conta de técnico foi desactivada. Contacte o gestor do seu conselho municipal.'
+                                : 'Esta conta não tem permissão de gestor ou técnico para aceder ao Portal de Operações.'}
+                        </p>
                     </div>
                     <button
                         className="login-button"
@@ -369,22 +426,22 @@ const App: React.FC = () => {
                     </div>
                 </header>
 
+                {loadError && (
+                    <div className="login-error" style={{ marginBottom: '1rem' }}>
+                        <AlertCircle size={18} />
+                        <span>{loadError}</span>
+                    </div>
+                )}
+
                 {activeTab === 'dashboard' && (
                     <>
-                        <DashboardStats
-                            total={stats.total}
-                            resolved={stats.resolved}
-                            pending={stats.pending}
-                            critical={stats.critical}
-                            cities={stats.cities}
-                            byTechnician={stats.byTechnician}
-                        />
+                        <DashboardStats stats={stats} />
 
                         <div className="dashboard-grid">
                             <div className="recent-activity">
                                 <h3>Ocorrências Críticas Prioritárias</h3>
                                 <div className="activity-list">
-                                    {potholes.filter(p => p.severity === 'high' && p.status !== 'repaired').slice(0, 6).map(p => (
+                                    {criticalList.map(p => (
                                         <div key={p.id} className="activity-item" onClick={() => setSelectedPothole(p)}>
                                             <div className="severity-dot high"></div>
                                             <div className="activity-info">
@@ -393,7 +450,7 @@ const App: React.FC = () => {
                                             </div>
                                         </div>
                                     ))}
-                                    {potholes.filter(p => p.severity === 'high' && p.status !== 'repaired').length === 0 && (
+                                    {criticalList.length === 0 && (
                                         <p className="empty-state">Sem ocorrências críticas pendentes.</p>
                                     )}
                                 </div>
@@ -404,22 +461,25 @@ const App: React.FC = () => {
 
                 {activeTab === 'potholes' && (
                     <PotholeTable
-                        potholes={filteredPotholes}
+                        potholes={potholes}
+                        totalCount={totalCount}
                         loading={loading}
-                        searchTerm={searchTerm}
-                        setSearchTerm={setSearchTerm}
-                        filterStatus={filterStatus}
-                        setFilterStatus={setFilterStatus}
-                        filterCategory={filterCategory}
-                        setFilterCategory={setFilterCategory}
-                        filterCity={filterCity}
-                        setFilterCity={setFilterCity}
-                        filterDate={filterDate}
-                        setFilterDate={setFilterDate}
-                        filterTechnicianId={filterTechnicianId}
-                        setFilterTechnicianId={setFilterTechnicianId}
-                        categories={allCategories}
-                        cities={allCities}
+                        loadingMore={loadingMore}
+                        onLoadMore={loadMore}
+                        searchTerm={searchInput}
+                        setSearchTerm={setSearchInput}
+                        filterStatus={filters.status}
+                        setFilterStatus={setFilter('status')}
+                        filterCategory={filters.category}
+                        setFilterCategory={setFilter('category')}
+                        filterCity={filters.city}
+                        setFilterCity={setFilter('city')}
+                        filterDate={filters.date}
+                        setFilterDate={setFilter('date')}
+                        filterTechnicianId={filters.technicianId}
+                        setFilterTechnicianId={setFilter('technicianId')}
+                        categories={Object.keys(CATEGORY_LABELS)}
+                        cities={stats.cities.map(c => c.name).filter(n => n !== 'Sem cidade').sort()}
                         technicians={technicians}
                         onUpdateStatus={handleUpdateStatus}
                         onShowDetails={setSelectedPothole}
@@ -427,27 +487,36 @@ const App: React.FC = () => {
                 )}
 
                 {activeTab === 'map' && (
-                    <PotholeMap
-                        potholes={filteredPotholes}
-                        filterStatus={filterStatus}
-                        setFilterStatus={setFilterStatus}
-                        filterCategory={filterCategory}
-                        setFilterCategory={setFilterCategory}
-                        filterDate={filterDate}
-                        setFilterDate={setFilterDate}
-                        categories={allCategories}
-                    />
+                    <Suspense fallback={<Fallback />}>
+                        <PotholeMap
+                            potholes={potholes}
+                            totalCount={totalCount}
+                            province={managerProvince}
+                            filterStatus={filters.status}
+                            setFilterStatus={setFilter('status')}
+                            filterCategory={filters.category}
+                            setFilterCategory={setFilter('category')}
+                            filterDate={filters.date}
+                            setFilterDate={setFilter('date')}
+                            categories={Object.keys(CATEGORY_LABELS)}
+                        />
+                    </Suspense>
                 )}
 
                 {activeTab === 'team' && (
-                    <TeamManager
-                        technicians={technicians}
-                        managerProvince={managerProvince}
-                    />
+                    <Suspense fallback={<Fallback />}>
+                        <TeamManager
+                            technicians={technicians}
+                            managerProvince={managerProvince}
+                            onChanged={fetchTechnicians}
+                        />
+                    </Suspense>
                 )}
 
                 {activeTab === 'profile' && (
-                    <UserProfile session={session} />
+                    <Suspense fallback={<Fallback />}>
+                        <UserProfile session={session} />
+                    </Suspense>
                 )}
 
                 {selectedPothole && (

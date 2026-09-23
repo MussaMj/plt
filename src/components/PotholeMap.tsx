@@ -1,11 +1,15 @@
 import React from 'react';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import { Filter } from 'lucide-react';
-import { Pothole, MAPUTO_CENTER } from '../types';
+import { Pothole } from '../types';
 import { getCategoryLabel } from '../categories';
+import { getMapView } from '../utils/province';
 
 interface PotholeMapProps {
     potholes: Pothole[];
+    totalCount: number;
+    /** The manager's province (null = national); decides where the map opens. */
+    province: string | null;
     filterStatus: string;
     setFilterStatus: (s: string) => void;
     filterCategory: string;
@@ -17,6 +21,8 @@ interface PotholeMapProps {
 
 const PotholeMap: React.FC<PotholeMapProps> = ({
     potholes,
+    totalCount,
+    province,
     filterStatus,
     setFilterStatus,
     filterCategory,
@@ -25,6 +31,8 @@ const PotholeMap: React.FC<PotholeMapProps> = ({
     setFilterDate,
     categories
 }) => {
+    const view = getMapView(province);
+
     return (
         <div className="map-view-container" style={{ position: 'relative' }}>
             {/* Map Filters Overlay */}
@@ -56,15 +64,22 @@ const PotholeMap: React.FC<PotholeMapProps> = ({
                 </div>
             </div>
 
+            {potholes.length < totalCount && (
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0 0 0.5rem' }}>
+                    A mostrar {potholes.length} de {totalCount} ocorrências — use os filtros ou "Carregar mais" na lista para ver as restantes.
+                </p>
+            )}
+
             <MapContainer
-                center={MAPUTO_CENTER}
-                zoom={13}
+                key={province ?? 'national'}
+                center={view.center}
+                zoom={view.zoom}
                 style={{ height: '600px', width: '100%', borderRadius: '16px', zIndex: 1 }}
             >
                 <TileLayer
-                    url="https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}"
-                    attribution='&copy; Google Maps'
-                    maxZoom={20}
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                    maxZoom={19}
                 />
                 {potholes.filter(p => p.location).map(p => (
                     <Marker

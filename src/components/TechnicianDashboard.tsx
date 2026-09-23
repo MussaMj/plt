@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Session } from '@supabase/supabase-js';
-import { Bell, LogOut, MapPin, Wrench } from 'lucide-react';
+import { Bell, CheckCheck, LogOut, MapPin, Wrench } from 'lucide-react';
 import { supabase } from '../utils/supabase';
 import { Pothole, ReportRow, mapReportRow } from '../types';
 import { getCategoryLabel } from '../categories';
@@ -11,6 +11,15 @@ interface TechnicianDashboardProps {
     technicianName: string;
 }
 
+interface InboxItem {
+    id: string;
+    title: string;
+    body: string;
+    read: boolean;
+    reportId: string | null;
+    createdAt: Date;
+}
+
 const statusLabel: Record<string, string> = {
     reported: 'Pendente',
     in_repair: 'Em Reparação',
@@ -19,9 +28,12 @@ const statusLabel: Record<string, string> = {
 
 const TechnicianDashboard: React.FC<TechnicianDashboardProps> = ({ session, technicianName }) => {
     const [assignments, setAssignments] = useState<Pothole[]>([]);
+    const [inbox, setInbox] = useState<InboxItem[]>([]);
     const [loading, setLoading] = useState(true);
-    const [unreadCount, setUnreadCount] = useState(0);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [selected, setSelected] = useState<Pothole | null>(null);
+
+    const unreadCount = inbox.filter(i => !i.read).length;
 
     const fetchAssignments = useCallback(async () => {
         const { data, error } = await supabase
@@ -32,36 +44,67 @@ const TechnicianDashboard: React.FC<TechnicianDashboardProps> = ({ session, tech
 
         if (error) {
             console.error('Error loading assignments:', error);
+            setLoadError('Não foi possível carregar as suas reparações.');
             setLoading(false);
             return;
         }
+        setLoadError(null);
         setAssignments((data as ReportRow[]).map(mapReportRow));
         setLoading(false);
     }, [session.user.id]);
 
-    const fetchUnreadCount = useCallback(async () => {
-        const { count } = await supabase
+    const fetchInbox = useCallback(async () => {
+        const { data, error } = await supabase
             .from('notifications')
-            .select('id', { count: 'exact', head: true })
+            .select('id, title, body, read, pothole_id, created_at')
             .eq('user_id', session.user.id)
-            .eq('read', false);
-        setUnreadCount(count ?? 0);
+            .order('created_at', { ascending: false })
+            .limit(30);
+
+        if (error) {
+            console.error('Error loading inbox:', error);
+            return;
+        }
+        setInbox((data ?? []).map((n: any) => ({
+            id: n.id,
+            title: n.title,
+            body: n.body,
+            read: n.read,
+            reportId: n.pothole_id,
+            createdAt: new Date(n.created_at),
+        })));
     }, [session.user.id]);
 
     useEffect(() => {
         fetchAssignments();
-        fetchUnreadCount();
+        fetchInbox();
 
         const channel = supabase
-            .channel('technician-assignments')
+            .channel('technician-portal')
             .on('postgres_changes', { event: '*', schema: 'public', table: 'reports' }, fetchAssignments)
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, fetchUnreadCount)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, fetchInbox)
             .subscribe();
 
         return () => {
             supabase.removeChannel(channel);
         };
-    }, [fetchAssignments, fetchUnreadCount]);
+    }, [fetchAssignments, fetchInbox]);
+
+    const markRead = async (ids: string[]) => {
+        if (ids.length === 0) return;
+        setInbox(prev => prev.map(i => (ids.includes(i.id) ? { ...i, read: true } : i)));
+        const { error } = await supabase.from('notifications').update({ read: true }).in('id', ids);
+        if (error) {
+            console.error('Error marking notifications as read:', error);
+            fetchInbox();
+        }
+    };
+
+    const openFromInbox = (item: InboxItem) => {
+        markRead(item.read ? [] : [item.id]);
+        const report = assignments.find(a => a.id === item.reportId);
+        if (report) setSelected(report);
+    };
 
     return (
         <div className="admin-container">
@@ -93,18 +136,69 @@ const TechnicianDashboard: React.FC<TechnicianDashboardProps> = ({ session, tech
                         <p>Reparações que lhe foram atribuídas pelo gestor</p>
                     </div>
                     <div className="user-profile">
-                        {unreadCount > 0 && (
-                            <span style={{
-                                display: 'flex', alignItems: 'center', gap: '0.35rem',
-                                color: 'var(--accent-danger)', fontWeight: 600, fontSize: '0.85rem',
-                            }}>
-                                <Bell size={16} /> {unreadCount} nova{unreadCount > 1 ? 's' : ''}
-                            </span>
-                        )}
                         <div className="user-avatar">{technicianName.substring(0, 2).toUpperCase()}</div>
                         <span>{technicianName}</span>
                     </div>
                 </header>
+
+                {loadError && (
+                    <div className="login-error" style={{ marginBottom: '1rem' }}>
+                        <span>{loadError}</span>
+                    </div>
+                )}
+
+                <section className="table-section" style={{ marginBottom: '1.5rem' }}>
+                    <div className="table-header">
+                        <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <Bell size={18} /> Caixa de Entrada
+                            {unreadCount > 0 && (
+                                <span style={{
+                                    background: 'var(--accent-danger)', color: 'white', borderRadius: '999px',
+                                    fontSize: '0.75rem', padding: '0.1rem 0.5rem', fontWeight: 700,
+                                }}>
+                                    {unreadCount} nova{unreadCount > 1 ? 's' : ''}
+                                </span>
+                            )}
+                        </h3>
+                        {unreadCount > 0 && (
+                            <button className="toggle-btn" onClick={() => markRead(inbox.filter(i => !i.read).map(i => i.id))}>
+                                <CheckCheck size={14} style={{ marginRight: '0.35rem' }} /> Marcar todas como lidas
+                            </button>
+                        )}
+                    </div>
+                    <div className="pothole-list">
+                        {inbox.length === 0 ? (
+                            <div className="empty-state">Sem notificações.</div>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                {inbox.map(item => (
+                                    <button
+                                        key={item.id}
+                                        onClick={() => openFromInbox(item)}
+                                        style={{
+                                            textAlign: 'left', cursor: 'pointer', border: 'none',
+                                            borderBottom: '1px solid var(--border-color)',
+                                            padding: '0.85rem 1rem', display: 'flex', gap: '0.75rem', alignItems: 'flex-start',
+                                            background: item.read ? 'transparent' : 'rgba(37, 99, 235, 0.06)',
+                                        }}
+                                    >
+                                        <span style={{
+                                            width: 8, height: 8, borderRadius: '50%', marginTop: 6, flexShrink: 0,
+                                            background: item.read ? 'transparent' : 'var(--accent-primary)',
+                                        }} />
+                                        <span style={{ flex: 1 }}>
+                                            <strong style={{ display: 'block', color: 'var(--text-primary)' }}>{item.title}</strong>
+                                            <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>{item.body}</span>
+                                        </span>
+                                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
+                                            {item.createdAt.toLocaleString('pt-MZ')}
+                                        </span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </section>
 
                 <section className="table-section">
                     <div className="pothole-list">
@@ -165,9 +259,23 @@ const TechnicianDashboard: React.FC<TechnicianDashboardProps> = ({ session, tech
                         onClose={() => setSelected(null)}
                         onUpdateStatus={async (id, status, notes, _technicianId, repairImageUrl) => {
                             const updateData: Record<string, unknown> = { status, updated_at: new Date().toISOString() };
-                            if (repairImageUrl !== undefined) updateData.repair_image_url = repairImageUrl;
+                            if (repairImageUrl !== undefined && repairImageUrl !== '') updateData.repair_image_url = repairImageUrl;
                             const { error } = await supabase.from('reports').update(updateData).eq('id', id);
-                            if (error) console.error('Error updating repair:', error);
+                            if (error) {
+                                console.error('Error updating repair:', error);
+                                setLoadError('Não foi possível guardar a alteração: ' + error.message);
+                                return;
+                            }
+                            if (notes && notes.trim()) {
+                                const { error: noteError } = await supabase.from('report_notes').insert({
+                                    report_id: id,
+                                    author_id: session.user.id,
+                                    author_name: technicianName,
+                                    note: notes.trim(),
+                                });
+                                if (noteError) console.error('Error saving note:', noteError);
+                            }
+                            fetchAssignments();
                         }}
                         technicians={[]}
                         viewerRole="technician"

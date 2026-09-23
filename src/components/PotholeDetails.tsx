@@ -38,6 +38,7 @@ const PotholeDetails: React.FC<PotholeDetailsProps> = ({ pothole, onClose, onUpd
     const [historyLoading, setHistoryLoading] = useState(true);
     const [repairImageUrl, setRepairImageUrl] = useState(pothole.repairImageUrl || '');
     const [uploadingPhoto, setUploadingPhoto] = useState(false);
+    const [uploadError, setUploadError] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const sc = statusConfig[pothole.status] || statusConfig.reported;
@@ -68,6 +69,7 @@ const PotholeDetails: React.FC<PotholeDetailsProps> = ({ pothole, onClose, onUpd
         if (!file) return;
 
         setUploadingPhoto(true);
+        setUploadError(null);
         try {
             const path = `repairs/${pothole.id}-${Date.now()}.jpg`;
             const { error } = await supabase.storage.from('map').upload(path, file, { contentType: file.type });
@@ -76,6 +78,7 @@ const PotholeDetails: React.FC<PotholeDetailsProps> = ({ pothole, onClose, onUpd
             setRepairImageUrl(data.publicUrl);
         } catch (err) {
             console.error('Error uploading repair photo:', err);
+            setUploadError('Não foi possível carregar a foto. Tente novamente.');
         } finally {
             setUploadingPhoto(false);
         }
@@ -158,15 +161,32 @@ const PotholeDetails: React.FC<PotholeDetailsProps> = ({ pothole, onClose, onUpd
                                     <Upload size={16} />
                                     {uploadingPhoto ? 'A carregar...' : repairImageUrl ? 'Substituir Foto' : 'Carregar Foto'}
                                 </button>
+                                {uploadError && (
+                                    <p style={{ color: 'var(--accent-danger)', fontSize: '0.8rem', marginTop: '0.5rem' }}>{uploadError}</p>
+                                )}
                             </div>
                         ) : (
-                            mapsUrl && (
-                                <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className="detail-maps-btn">
-                                    <MapPin size={16} />
-                                    Abrir no Google Maps
-                                    <ExternalLink size={14} />
-                                </a>
-                            )
+                            <>
+                                {pothole.repairImageUrl && (
+                                    <div className="detail-field" style={{ marginTop: '1rem' }}>
+                                        <label className="detail-field-label">
+                                            <CheckCircle2 size={13} /> Foto da Reparação
+                                        </label>
+                                        <img
+                                            src={pothole.repairImageUrl}
+                                            alt="Reparação concluída"
+                                            style={{ width: '100%', borderRadius: '10px' }}
+                                        />
+                                    </div>
+                                )}
+                                {mapsUrl && (
+                                    <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className="detail-maps-btn">
+                                        <MapPin size={16} />
+                                        Abrir no Google Maps
+                                        <ExternalLink size={14} />
+                                    </a>
+                                )}
+                            </>
                         )}
 
                         <div className="detail-meta-chips">
@@ -210,9 +230,13 @@ const PotholeDetails: React.FC<PotholeDetailsProps> = ({ pothole, onClose, onUpd
                                     onChange={(e) => setTechnicianId(e.target.value)}
                                 >
                                     <option value="">Não atribuído</option>
-                                    {technicians.map(t => (
-                                        <option key={t.id} value={t.id}>{t.name}</option>
-                                    ))}
+                                    {technicians
+                                        .filter(t => t.active || t.id === pothole.assignedTechnicianId)
+                                        .map(t => (
+                                            <option key={t.id} value={t.id}>
+                                                {t.name}{t.active ? '' : ' (inactivo)'}
+                                            </option>
+                                        ))}
                                 </select>
                             </div>
                         )}
@@ -230,7 +254,9 @@ const PotholeDetails: React.FC<PotholeDetailsProps> = ({ pothole, onClose, onUpd
                                     <User size={13} /> Reportado por
                                 </label>
                                 <p className="detail-field-value">
-                                    {pothole.reporterUids?.join(', ') || 'Anónimo'}
+                                    {pothole.reporterUids?.length
+                                        ? `${pothole.reporterUids.length} cidadão${pothole.reporterUids.length > 1 ? 's' : ''}`
+                                        : 'Anónimo'}
                                 </p>
                             </div>
                         )}
